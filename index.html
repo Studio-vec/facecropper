@@ -255,7 +255,7 @@
 
 <script>
 // ── 빌드 타임스탬프 표시 ──────────────────────────
-const BUILD_TIME = '2026-04-01T07:13:48Z';
+const BUILD_TIME = '2026-04-01T07:28:26Z';
 (function() {
   const d = new Date(BUILD_TIME);
   const pad = n => String(n).padStart(2,'0');
@@ -454,7 +454,7 @@ async function processImage(img, doUpscale = false) {
 
   try {
     setStatus('얼굴 인식 중...');
-    const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 512, scoreThreshold: 0.4 });
+    const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 608, scoreThreshold: 0.2 });
     const dets = await faceapi.detectAllFaces(procImg, opts).withFaceLandmarks(true);
 
     if (!dets || dets.length === 0) {
