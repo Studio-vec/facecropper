@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FaceCropper</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&display=swap" rel="stylesheet">
+<script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Noto Sans KR', sans-serif;
+    background: #f5f5f3;
+    color: #111;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 20px;
+  }
+
+  h1 { font-size: 18px; font-weight: 700; margin-bottom: 6px; letter-spacing: -0.3px; }
+  .sub { font-size: 13px; color: #888; margin-bottom: 32px; }
+
+  .card {
+    background: #fff;
+    border-radius: 16px;
+    padding: 32px;
+    width: 100%;
+    max-width: 480px;
+    box-shadow: 0 2px 16px rgba(0,0,0,0.07);
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .dropzone {
+    border: 2px dashed #ddd;
+    border-radius: 12px;
+    padding: 40px 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  .dropzone:hover, .dropzone.over { border-color: #111; background: #fafafa; }
+  .dropzone-icon { font-size: 36px; }
+  .dropzone-label { font-size: 14px; color: #555; }
+  #fileInput { display: none; }
+
+  .btn {
+    background: #111;
+    color: #fff;
+    border: none;
+    padding: 14px;
+    border-radius: 10px;
+    font-family: 'Noto Sans KR', sans-serif;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    width: 100%;
+    transition: opacity 0.15s;
+  }
+  .btn:disabled { opacity: 0.3; cursor: not-allowed; }
+  .btn:hover:not(:disabled) { opacity: 0.85; }
+
+  .previews { display: none; gap: 12px; }
+  .previews.visible { display: grid; grid-template-columns: 1fr 1fr; }
+
+  .preview-wrap { display: flex; flex-direction: column; gap: 6px; }
+  .preview-label { font-size: 11px; color: #aaa; text-align: center; }
+  .preview-img-box {
+    background: #f0f0ee;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    aspect-ratio: 1;
+  }
+  .preview-img-box img, .preview-img-box canvas {
+    width: 100%; height: 100%; object-fit: contain;
+  }
+
+  /* 오류 박스 */
+  .error-box {
+    display: none;
+    background: #fff8f8;
+    border: 1px solid #ffc0c0;
+    border-radius: 10px;
+    padding: 16px 18px;
+    font-size: 13px;
+    line-height: 1.8;
+    color: #c00;
+  }
+  .error-box.visible { display: block; }
+  .error-box .error-title { font-weight: 700; font-size: 14px; margin-bottom: 6px; }
+  .error-box .error-guide {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid #ffd0d0;
+    color: #555;
+    font-size: 13px;
+  }
+
+  .status { font-size: 13px; color: #888; text-align: center; min-height: 20px; }
+  .status.ok { color: #080; }
+
+  .spinner {
+    display: none;
+    width: 20px; height: 20px;
+    border: 2px solid #ddd;
+    border-top-color: #111;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    margin: 0 auto;
+  }
+  .spinner.visible { display: block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .reset-link {
+    display: none;
+    text-align: center;
+    font-size: 13px;
+    color: #aaa;
+    cursor: pointer;
+    text-decoration: underline;
+  }
+  .reset-link.visible { display: block; }
+</style>
+</head>
+<body>
+
+<h1>FaceCropper</h1>
+<p class="sub">얼굴 자동 인식 → 300×300 JPG 저장</p>
+
+<div class="card">
+
+  <div class="dropzone" id="dropzone">
+    <div class="dropzone-icon">🖼</div>
+    <div class="dropzone-label">이미지를 드래그하거나 클릭해서 업로드</div>
+    <input type="file" id="fileInput" accept="image/jpeg,image/png">
+  </div>
+
+  <div class="previews" id="previews">
+    <div class="preview-wrap">
+      <div class="preview-label">원본</div>
+      <div class="preview-img-box"><img id="origImg" alt="원본"></div>
+    </div>
+    <div class="preview-wrap">
+      <div class="preview-label">결과 · 300×300</div>
+      <div class="preview-img-box"><canvas id="resultCanvas" width="300" height="300"></canvas></div>
+    </div>
+  </div>
+
+  <!-- 오류 박스 -->
+  <div class="error-box" id="errorBox">
+    <div class="error-title" id="errorTitle">⚠ 오류</div>
+    <div id="errorMsg"></div>
+    <div class="error-guide">
+      원본 파일을 <strong>김태희 연구원</strong>에게 카카오톡으로 보내주세요.
+    </div>
+  </div>
+
+  <div class="spinner" id="spinner"></div>
+  <div class="status" id="status">모델 로딩 중...</div>
+
+  <button class="btn" id="downloadBtn" disabled onclick="downloadResult()">저장</button>
+  <span class="reset-link" id="resetLink" onclick="resetAll()">다시 업로드</span>
+
+</div>
+
+<script>
+// ── 배포 설정 ──────────────────────────────────────
+const SCALE          = 1.45;
+const CENTER_Y_RATIO = 0.5;
+const OUTPUT_SIZE    = 300;
+const MAX_FILE_MB    = 10;       // 허용 최대 파일 크기
+// ──────────────────────────────────────────────────
+
+const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.13/model';
+
+let modelsReady = false;
+let lastImg = null;
+let lastBox = null;
+
+const dropzone     = document.getElementById('dropzone');
+const fileInput    = document.getElementById('fileInput');
+const previews     = document.getElementById('previews');
+const origImg      = document.getElementById('origImg');
+const resultCanvas = document.getElementById('resultCanvas');
+const spinner      = document.getElementById('spinner');
+const statusEl     = document.getElementById('status');
+const downloadBtn  = document.getElementById('downloadBtn');
+const resetLink    = document.getElementById('resetLink');
+const errorBox     = document.getElementById('errorBox');
+const errorTitle   = document.getElementById('errorTitle');
+const errorMsg     = document.getElementById('errorMsg');
+
+function waitForFaceAPI(cb) {
+  if (typeof faceapi !== 'undefined') cb();
+  else setTimeout(() => waitForFaceAPI(cb), 100);
+}
+waitForFaceAPI(async () => {
+  try {
+    await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+    modelsReady = true;
+    setStatus('이미지를 업로드하세요');
+  } catch {
+    showError('모델 로딩 실패', '네트워크 연결을 확인하고 새로고침 해주세요.');
+  }
+});
+
+dropzone.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', e => { if (e.target.files[0]) handleFile(e.target.files[0]); });
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('over'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('over'));
+dropzone.addEventListener('drop', e => {
+  e.preventDefault(); dropzone.classList.remove('over');
+  const f = e.dataTransfer.files[0];
+  if (f) handleFile(f);
+});
+
+async function handleFile(file) {
+  hideError();
+  resetLink.classList.remove('visible');
+  downloadBtn.disabled = true;
+
+  // 모델 로딩 체크
+  if (!modelsReady) {
+    showError('모델 준비 중', '잠시 후 다시 시도해 주세요.');
+    return;
+  }
+
+  // 파일 크기 체크
+  if (file.size > MAX_FILE_MB * 1024 * 1024) {
+    showError(
+      '파일 크기 초과',
+      `파일 크기가 ${MAX_FILE_MB}MB를 초과합니다. (현재 ${(file.size/1024/1024).toFixed(1)}MB)`
+    );
+    resetLink.classList.add('visible');
+    return;
+  }
+
+  // 파일 형식 체크
+  if (!['image/jpeg','image/png'].includes(file.type)) {
+    showError('지원하지 않는 형식', 'JPG 또는 PNG 파일만 업로드할 수 있습니다.');
+    resetLink.classList.add('visible');
+    return;
+  }
+
+  const url = URL.createObjectURL(file);
+  origImg.src = url;
+  previews.classList.add('visible');
+  setStatus('');
+  spinner.classList.add('visible');
+
+  const img = new Image();
+  img.onload = async () => {
+    try {
+      const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 512, scoreThreshold: 0.4 });
+      const dets = await faceapi.detectAllFaces(img, opts);
+
+      if (!dets || dets.length === 0) {
+        spinner.classList.remove('visible');
+        showError('얼굴 인식 실패', '사진에서 얼굴을 찾지 못했습니다.\n정면을 바라보는 선명한 사진을 사용해 주세요.');
+        resetLink.classList.add('visible');
+        return;
+      }
+
+      const det = dets.reduce((a, b) =>
+        a.box.width * a.box.height >= b.box.width * b.box.height ? a : b
+      );
+      lastImg = img;
+      lastBox = det.box;
+
+      cropAndDraw(img, det.box);
+      spinner.classList.remove('visible');
+      setStatus('인식 완료 ✓');
+      downloadBtn.disabled = false;
+      resetLink.classList.add('visible');
+    } catch(err) {
+      spinner.classList.remove('visible');
+      showError('처리 오류', '이미지 처리 중 문제가 발생했습니다.');
+      resetLink.classList.add('visible');
+    }
+  };
+  img.onerror = () => {
+    spinner.classList.remove('visible');
+    showError('파일 오류', '이미지를 불러올 수 없습니다. 파일이 손상되었을 수 있습니다.');
+    resetLink.classList.add('visible');
+  };
+  img.src = url;
+}
+
+function cropAndDraw(img, box) {
+  const { x, y, width: w, height: h } = box;
+  const cx = x + w * 0.5;
+  const cy = y + h * CENTER_Y_RATIO;
+  const size = Math.max(w, h) * SCALE;
+  const half = size / 2;
+  const ctx = resultCanvas.getContext('2d');
+  ctx.clearRect(0, 0, OUTPUT_SIZE, OUTPUT_SIZE);
+  ctx.drawImage(img, cx - half, cy - half, size, size, 0, 0, OUTPUT_SIZE, OUTPUT_SIZE);
+}
+
+function downloadResult() {
+  const a = document.createElement('a');
+  a.download = 'photo_300x300.jpg';
+  a.href = resultCanvas.toDataURL('image/jpeg', 0.95);
+  a.click();
+}
+
+function resetAll() {
+  lastImg = null; lastBox = null;
+  origImg.src = '';
+  resultCanvas.getContext('2d').clearRect(0, 0, OUTPUT_SIZE, OUTPUT_SIZE);
+  previews.classList.remove('visible');
+  resetLink.classList.remove('visible');
+  downloadBtn.disabled = true;
+  fileInput.value = '';
+  hideError();
+  setStatus('이미지를 업로드하세요');
+}
+
+function showError(title, msg) {
+  errorTitle.textContent = '⚠ ' + title;
+  errorMsg.textContent = msg;
+  errorBox.classList.add('visible');
+  setStatus('');
+}
+function hideError() { errorBox.classList.remove('visible'); }
+function setStatus(msg) { statusEl.textContent = msg; statusEl.className = msg === '인식 완료 ✓' ? 'status ok' : 'status'; }
+</script>
+</body>
+</html>
