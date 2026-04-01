@@ -6,6 +6,7 @@
 <title>FaceCropper</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&display=swap" rel="stylesheet">
 <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+<!-- BUILD:2026-04-01T06:51:36Z -->
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -22,7 +23,8 @@
   }
 
   h1 { font-size: 18px; font-weight: 700; margin-bottom: 6px; letter-spacing: -0.3px; }
-  .sub { font-size: 13px; color: #888; margin-bottom: 32px; }
+  .sub { font-size: 13px; color: #888; margin-bottom: 4px; }
+  .build-info { font-size: 11px; color: #bbb; margin-bottom: 28px; }
 
   .card {
     background: #fff;
@@ -136,6 +138,7 @@
 
 <h1>FaceCropper</h1>
 <p class="sub">얼굴 자동 인식 → 300×300 JPG 저장</p>
+<p class="build-info" id="buildInfo"></p>
 
 <div class="card">
 
@@ -173,6 +176,16 @@
 </div>
 
 <script>
+// ── 빌드 타임스탬프 표시 ──────────────────────────
+const BUILD_TIME = '2026-04-01T06:51:36Z';
+(function() {
+  const d = new Date(BUILD_TIME);
+  const pad = n => String(n).padStart(2,'0');
+  const label = `${d.getFullYear()}.${pad(d.getMonth()+1)}.${pad(d.getDate())} `
+              + `${pad(d.getHours())}:${pad(d.getMinutes())} 배포`;
+  document.getElementById('buildInfo').textContent = label;
+})();
+
 // ── 배포 설정 ──────────────────────────────────────
 const FACE_FILL_RATIO = 0.70; // 결과 이미지에서 얼굴이 차지할 비율 (0~1)
 const CENTER_Y_RATIO = 0.35;
@@ -207,6 +220,7 @@ function waitForFaceAPI(cb) {
 waitForFaceAPI(async () => {
   try {
     await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+    await faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL);
     modelsReady = true;
     setStatus('이미지를 업로드하세요');
   } catch {
@@ -251,7 +265,7 @@ async function handleFile(file) {
   img.onload = async () => {
     try {
       const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 512, scoreThreshold: 0.4 });
-      const dets = await faceapi.detectAllFaces(img, opts);
+      const dets = await faceapi.detectAllFaces(img, opts).withFaceLandmarks(true);
 
       if (!dets || dets.length === 0) {
         spinner.classList.remove('visible');
@@ -260,11 +274,27 @@ async function handleFile(file) {
         return;
       }
 
+      // 가장 큰 얼굴 선택
       const det = dets.reduce((a, b) =>
-        a.box.width * a.box.height >= b.box.width * b.box.height ? a : b
+        a.detection.box.width * a.detection.box.height >=
+        b.detection.box.width * b.detection.box.height ? a : b
       );
-      lastImg = img; lastBox = det.box;
-      cropAndDraw(img, det.box);
+
+      // 랜드마크로 실제 얼굴 크기 측정 (눈 위 ~ 턱 끝 세로 거리)
+      const lm = det.landmarks.positions;
+      const topY    = Math.min(...lm.slice(17, 27).map(p => p.y)); // 눈썹 위
+      const bottomY = Math.max(...lm.slice(0, 17).map(p => p.y));  // 턱 라인
+      const leftX   = Math.min(...lm.map(p => p.x));
+      const rightX  = Math.max(...lm.map(p => p.x));
+      const faceH   = bottomY - topY;
+      const faceW   = rightX - leftX;
+      const faceSize = Math.max(faceW, faceH);
+      const faceCx   = (leftX + rightX) / 2;
+      const faceCy   = topY + faceH * CENTER_Y_RATIO;
+
+      lastImg = img;
+      lastBox = { cx: faceCx, cy: faceCy, faceSize };
+      cropAndDraw(img, lastBox);
       spinner.classList.remove('visible');
       setStatus('인식 완료 ✓');
       downloadBtn.disabled = false;
@@ -283,37 +313,27 @@ async function handleFile(file) {
   img.src = url;
 }
 
-function cropAndDraw(img, box) {
-  const { x, y, width: w, height: h } = box;
-  const cx = x + w * 0.5;
-  const cy = y + h * CENTER_Y_RATIO;
-  // 얼굴 박스가 결과 이미지의 FACE_FILL_RATIO 비율을 차지하도록 역산
-  const size = Math.max(w, h) / FACE_FILL_RATIO;
+function cropAndDraw(img, { cx, cy, faceSize }) {
+  // 랜드마크로 측정한 실제 얼굴 크기 기준으로 크롭 영역 역산
+  const size = faceSize / FACE_FILL_RATIO;
   const half = size / 2;
 
-  // 크롭 영역 (원본 이미지 좌표 기준)
   const sx = cx - half;
   const sy = cy - half;
 
   const ctx = resultCanvas.getContext('2d');
   ctx.clearRect(0, 0, OUTPUT_SIZE, OUTPUT_SIZE);
-
-  // 배경 먼저 채움 → 이미지 밖으로 나간 부분은 이 색으로 자동 패딩
   ctx.fillStyle = PAD_COLOR;
   ctx.fillRect(0, 0, OUTPUT_SIZE, OUTPUT_SIZE);
 
-  // 이미지 범위와 크롭 영역의 교차 계산
   const clipSx = Math.max(sx, 0);
   const clipSy = Math.max(sy, 0);
   const clipEx = Math.min(sx + size, img.width);
   const clipEy = Math.min(sy + size, img.height);
-
-  const clipW = clipEx - clipSx;
-  const clipH = clipEy - clipSy;
-
+  const clipW  = clipEx - clipSx;
+  const clipH  = clipEy - clipSy;
   if (clipW <= 0 || clipH <= 0) return;
 
-  // 출력 캔버스에서의 대응 위치
   const dxRatio = (clipSx - sx) / size;
   const dyRatio = (clipSy - sy) / size;
   const dwRatio = clipW / size;
@@ -321,8 +341,8 @@ function cropAndDraw(img, box) {
 
   ctx.drawImage(
     img,
-    clipSx, clipSy, clipW, clipH,                              // 원본에서 실제로 있는 부분만
-    dxRatio * OUTPUT_SIZE, dyRatio * OUTPUT_SIZE,               // 결과 캔버스 내 위치
+    clipSx, clipSy, clipW, clipH,
+    dxRatio * OUTPUT_SIZE, dyRatio * OUTPUT_SIZE,
     dwRatio * OUTPUT_SIZE, dhRatio * OUTPUT_SIZE
   );
 }
