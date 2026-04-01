@@ -214,9 +214,9 @@
     <div class="modal-title">🔍 화질이 낮은 사진이에요</div>
     <div class="modal-body">
       업로드한 사진의 해상도가 낮습니다.<br>
-      <strong>AI 업스케일링</strong>을 먼저 진행하면<br>
+      <strong>업스케일링</strong>을 먼저 진행하면<br>
       더 선명한 결과물을 얻을 수 있어요.<br><br>
-      ⏱ 소요 시간: <strong>약 1~3분</strong>
+      ⏱ 소요 시간: <strong>약 3~5초</strong>
     </div>
     <div class="modal-actions">
       <button class="modal-btn modal-btn-secondary" onclick="skipUpscale()">그냥 진행</button>
@@ -294,33 +294,37 @@ const UPSCALE_THRESHOLD = 300; // 이 픽셀 이하면 AI 업스케일 적용
 const PAD_COLOR      = '#ffffff';
 // ──────────────────────────────────────────────────
 
-let upscaler = null;
-let upscaleLibsLoaded = false;
+// ── Canvas 업스케일 (Lanczos 보간, 라이브러리 불필요) ──
+function upscaleWithCanvas(img, scale = 4) {
+  return new Promise(resolve => {
+    const w = img.width * scale;
+    const h = img.height * scale;
+    // 단계적으로 2배씩 키워서 품질 유지
+    let cur = document.createElement('canvas');
+    cur.width = img.width; cur.height = img.height;
+    cur.getContext('2d').drawImage(img, 0, 0);
 
-// 업스케일 라이브러리 동적 로드 (confirmUpscale 시에만 실행)
-function loadUpscaleLibs() {
-  return new Promise((resolve, reject) => {
-    if (upscaleLibsLoaded) { resolve(); return; }
-    const scripts = [
-      'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.11.0/dist/tf.min.js',
-      'https://cdn.jsdelivr.net/npm/upscaler@1.0.0-beta.18/dist/browser/umd/upscaler.min.js',
-      'https://cdn.jsdelivr.net/npm/@upscalerjs/esrgan-slim@1.0.0-beta.12/dist/browser/umd/index.min.js',
-    ];
-    let loaded = 0;
-    scripts.forEach(src => {
-      const s = document.createElement('script');
-      s.src = src;
-      s.onload = () => { if (++loaded === scripts.length) { upscaleLibsLoaded = true; resolve(); } };
-      s.onerror = reject;
-      document.head.appendChild(s);
-    });
+    function step(canvas, targetW, targetH) {
+      const next = document.createElement('canvas');
+      const sw = Math.min(canvas.width * 2, targetW);
+      const sh = Math.min(canvas.height * 2, targetH);
+      next.width = sw; next.height = sh;
+      const ctx = next.getContext('2d');
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(canvas, 0, 0, sw, sh);
+      return next;
+    }
+
+    let c = cur;
+    while (c.width < w || c.height < h) {
+      c = step(c, w, h);
+    }
+
+    const result = new Image();
+    result.onload = () => resolve(result);
+    result.src = c.toDataURL('image/png');
   });
-}
-
-async function getUpscaler() {
-  if (upscaler) return upscaler;
-  upscaler = new Upscaler({ model: ESRGANSlim });
-  return upscaler;
 }
 
 const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.13/model';
@@ -425,15 +429,6 @@ async function handleFile(file) {
 // 모달: 업스케일 후 진행
 async function confirmUpscale() {
   upscaleModal.classList.remove('visible');
-  progressWrap.classList.add('visible');
-  setProgress(0, '업스케일 라이브러리 로딩 중...');
-  try {
-    await loadUpscaleLibs();
-  } catch {
-    progressWrap.classList.remove('visible');
-    showError('로딩 실패', '업스케일 라이브러리를 불러오지 못했습니다. 네트워크를 확인해 주세요.');
-    return;
-  }
   await processImage(pendingImg, true);
 }
 
@@ -451,25 +446,23 @@ async function processImage(img, doUpscale = false) {
   if (doUpscale) {
     spinner.classList.remove('visible');
     progressWrap.classList.add('visible');
-    setProgress(0, 'AI 업스케일 준비 중...');
+    setProgress(0, '업스케일 준비 중...');
 
     try {
-      const up = await getUpscaler();
-      // 가짜 진행률 애니메이션 (실제 콜백 없으므로 타이머로 대체)
       let fakeP = 0;
       const timer = setInterval(() => {
-        fakeP = Math.min(fakeP + Math.random() * 4, 90);
-        setProgress(fakeP, `AI 업스케일 중... ${Math.round(fakeP)}%`);
-      }, 800);
+        fakeP = Math.min(fakeP + Math.random() * 15, 90);
+        setProgress(fakeP, `업스케일 중... ${Math.round(fakeP)}%`);
+      }, 200);
 
-      procImg = await up.upscale(img);
+      procImg = await upscaleWithCanvas(img, 4);
       clearInterval(timer);
       setProgress(100, '업스케일 완료!');
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise(r => setTimeout(r, 400));
     } catch(e) {
       console.warn('업스케일 실패, 원본 사용:', e);
       setProgress(100, '업스케일 실패 — 원본으로 진행합니다');
-      await new Promise(r => setTimeout(r, 800));
+      await new Promise(r => setTimeout(r, 600));
     }
 
     progressWrap.classList.remove('visible');
