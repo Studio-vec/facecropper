@@ -6,7 +6,7 @@
 <title>FaceCropper</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&display=swap" rel="stylesheet">
 <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
-<!-- BUILD:2026-04-01T07:13:48Z -->
+<!-- BUILD:2026-04-01T07:58:34Z -->
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -157,38 +157,6 @@
   .notice-banner strong { color: #c00; }
 
   /* 업스케일 안내 모달 */
-  .modal-overlay {
-    display: none;
-    position: fixed;
-    inset: 0;
-    background: rgba(0,0,0,0.45);
-    z-index: 999;
-    align-items: center;
-    justify-content: center;
-  }
-  .modal-overlay.visible { display: flex; }
-  .modal {
-    background: #fff;
-    border-radius: 16px;
-    padding: 28px 28px 24px;
-    width: 90%;
-    max-width: 360px;
-    box-shadow: 0 8px 40px rgba(0,0,0,0.18);
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-  .modal-title { font-size: 16px; font-weight: 700; }
-  .modal-body { font-size: 13px; color: #555; line-height: 1.8; }
-  .modal-body strong { color: #111; }
-  .modal-actions { display: flex; gap: 10px; margin-top: 4px; }
-  .modal-btn {
-    flex: 1; padding: 12px; border-radius: 10px;
-    font-family: 'Noto Sans KR', sans-serif;
-    font-size: 14px; font-weight: 700; cursor: pointer; border: none;
-  }
-  .modal-btn-primary { background: #111; color: #fff; }
-  .modal-btn-secondary { background: #f0f0ee; color: #555; }
 
   /* 진행바 */
   .progress-wrap {
@@ -216,20 +184,6 @@
 <body>
 
 <!-- 업스케일 안내 모달 -->
-<div class="modal-overlay" id="upscaleModal">
-  <div class="modal">
-    <div class="modal-title">🔍 화질이 낮은 사진이에요</div>
-    <div class="modal-body">
-      업로드한 사진의 해상도가 낮습니다.<br>
-      <strong>업스케일링</strong>을 먼저 진행하면<br>
-      더 선명한 결과물을 얻을 수 있어요.<br><br>
-      ⏱ 소요 시간: <strong>약 3~5초</strong>
-    </div>
-    <div class="modal-actions">
-      <button class="modal-btn modal-btn-secondary" onclick="skipUpscale()">그냥 진행</button>
-      <button class="modal-btn modal-btn-primary" onclick="confirmUpscale()">업스케일 후 진행</button>
-    </div>
-  </div>
 </div>
 
 <div class="notice-banner">
@@ -277,13 +231,14 @@
   <div class="status" id="status">모델 로딩 중...</div>
   <div class="batch-status" id="batchStatus"></div>
 
+  <button class="btn" id="downloadBtn" disabled onclick="downloadResult()">저장</button>
   <span class="reset-link" id="resetLink" onclick="resetAll()">다시 업로드</span>
 
 </div>
 
 <script>
 // ── 빌드 타임스탬프 표시 ──────────────────────────
-const BUILD_TIME = '2026-04-01T07:56:11Z';
+const BUILD_TIME = '2026-04-01T07:58:34Z';
 (function() {
   const d = new Date(BUILD_TIME);
   const pad = n => String(n).padStart(2,'0');
@@ -340,14 +295,12 @@ let modelsReady = false;
 let lastImg = null;
 let lastBox = null;
 let originalFileName = '';
-let pendingImg = null;
 let pendingFile = null;
 let currentObjectURL = null;
 
 const progressWrap  = document.getElementById('progressWrap');
 const progressBar   = document.getElementById('progressBar');
 const progressLabel = document.getElementById('progressLabel');
-const upscaleModal  = document.getElementById('upscaleModal');
 
 const dropzone     = document.getElementById('dropzone');
 const fileInput    = document.getElementById('fileInput');
@@ -396,14 +349,6 @@ async function handleFiles(files) {
   for (let i = 0; i < total; i++) {
     batchStatus.textContent = total > 1 ? `${i + 1} / ${total} 처리 중` : '';
     await handleFile(files[i]);
-    // 업스케일 모달 대기 중이면 사용자 선택 완료까지 대기
-    await new Promise(r => {
-      const check = () => {
-        if (!upscaleModal.classList.contains('visible')) r();
-        else setTimeout(check, 100);
-      };
-      check();
-    });
   }
   batchStatus.textContent = total > 1 ? `✓ ${total}장 완료` : '';
   setTimeout(() => { batchStatus.textContent = ''; }, 3000);
@@ -438,13 +383,8 @@ async function handleFile(file) {
   const img = new Image();
   img.onload = async () => {
     spinner.classList.remove('visible');
-    // 500px 이하면 모달 띄우기
-    if (Math.max(img.width, img.height) <= UPSCALE_THRESHOLD) {
-      pendingImg = img;
-      upscaleModal.classList.add('visible');
-    } else {
-      await processImage(img);
-    }
+    const needsUpscale = Math.max(img.width, img.height) <= UPSCALE_THRESHOLD;
+    await processImage(img, needsUpscale);
   };
   img.onerror = () => {
     spinner.classList.remove('visible');
@@ -455,17 +395,6 @@ async function handleFile(file) {
 }
 
 // 모달: 업스케일 후 진행
-async function confirmUpscale() {
-  upscaleModal.classList.remove('visible');
-  await processImage(pendingImg, true);
-}
-
-// 모달: 그냥 진행
-async function skipUpscale() {
-  upscaleModal.classList.remove('visible');
-  await processImage(pendingImg, false);
-}
-
 // 실제 이미지 처리 (업스케일 여부 선택)
 async function processImage(img, doUpscale = false) {
   spinner.classList.add('visible');
@@ -529,8 +458,8 @@ async function processImage(img, doUpscale = false) {
     cropAndDraw(procImg, lastBox);
     spinner.classList.remove('visible');
     setStatus('인식 완료 ✓');
+    document.getElementById('downloadBtn').disabled = false;
     resetLink.classList.add('visible');
-    downloadResult(); // 자동 다운로드
   } catch {
     spinner.classList.remove('visible');
     showError('처리 오류', '이미지 처리 중 문제가 발생했습니다.');
@@ -640,12 +569,13 @@ function downloadResult() {
 }
 
 function resetAll() {
-  lastImg = null; lastBox = null; pendingImg = null;
+  lastImg = null; lastBox = null;
   if (currentObjectURL) { URL.revokeObjectURL(currentObjectURL); currentObjectURL = null; }
   origImg.src = '';
   resultCanvas.getContext('2d').clearRect(0, 0, OUTPUT_SIZE, OUTPUT_SIZE);
   previews.classList.remove('visible');
   resetLink.classList.remove('visible');
+  document.getElementById('downloadBtn').disabled = true;
   fileInput.value = '';
   hideError();
   setStatus('이미지를 업로드하세요');
