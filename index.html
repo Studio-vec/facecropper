@@ -187,7 +187,7 @@ const BUILD_TIME = '2026-04-01T06:51:36Z';
 })();
 
 // ── 배포 설정 ──────────────────────────────────────
-const FACE_FILL_RATIO = 0.45; // 결과 이미지에서 얼굴이 차지할 비율 (0~1)
+const FACE_FILL_RATIO = 0.70; // 결과 이미지에서 얼굴이 차지할 비율 (0~1)
 const CENTER_Y_RATIO = 0.35;
 const OUTPUT_SIZE    = 300;
 const MAX_FILE_MB    = 10;
@@ -316,19 +316,72 @@ async function handleFile(file) {
   img.src = url;
 }
 
+// 이미지 가장자리 픽셀들의 평균 색상 추출
+function sampleEdgeColor(img, sx, sy, size) {
+  const tmpC = document.createElement('canvas');
+  const tmpCtx = tmpC.getContext('2d');
+  // 원본 이미지에서 크롭 영역 안쪽 가장자리 샘플링 (이미지 범위 내)
+  const csx = Math.max(sx, 0), csy = Math.max(sy, 0);
+  const cex = Math.min(sx + size, img.width), cey = Math.min(sy + size, img.height);
+  const cw = cex - csx, ch = cey - csy;
+  if (cw <= 0 || ch <= 0) return '#ffffff';
+
+  // 작은 캔버스에 이미지 그려서 픽셀 샘플링
+  const S = 20;
+  tmpC.width = S; tmpC.height = S;
+  tmpCtx.drawImage(img, csx, csy, cw, ch, 0, 0, S, S);
+
+  let r = 0, g = 0, b = 0, count = 0;
+  // 가장자리 픽셀만 샘플 (상/하/좌/우 1px 테두리)
+  const data = tmpCtx.getImageData(0, 0, S, S).data;
+  for (let i = 0; i < S; i++) {
+    for (let j = 0; j < S; j++) {
+      if (i === 0 || i === S-1 || j === 0 || j === S-1) {
+        const idx = (i * S + j) * 4;
+        r += data[idx]; g += data[idx+1]; b += data[idx+2];
+        count++;
+      }
+    }
+  }
+  r = Math.round(r/count); g = Math.round(g/count); b = Math.round(b/count);
+  return `rgb(${r},${g},${b})`;
+}
+
 function cropAndDraw(img, { cx, cy, faceSize }) {
-  // 랜드마크로 측정한 실제 얼굴 크기 기준으로 크롭 영역 역산
   const size = faceSize / FACE_FILL_RATIO;
   const half = size / 2;
-
   const sx = cx - half;
   const sy = cy - half;
 
   const ctx = resultCanvas.getContext('2d');
   ctx.clearRect(0, 0, OUTPUT_SIZE, OUTPUT_SIZE);
-  ctx.fillStyle = PAD_COLOR;
-  ctx.fillRect(0, 0, OUTPUT_SIZE, OUTPUT_SIZE);
 
+  // 크롭 영역이 이미지 밖으로 나가는지 확인
+  const needsPad = sx < 0 || sy < 0 || sx + size > img.width || sy + size > img.height;
+
+  if (needsPad) {
+    // 가장자리 색 샘플링해서 배경 채우기
+    const edgeColor = sampleEdgeColor(img, sx, sy, size);
+
+    // 1) 샘플링한 색으로 전체 배경
+    ctx.fillStyle = edgeColor;
+    ctx.fillRect(0, 0, OUTPUT_SIZE, OUTPUT_SIZE);
+
+    // 2) 그 위에 블러 효과로 경계 부드럽게 (이미지 확대 후 흐리게 깔기)
+    const clipSx2 = Math.max(sx, 0);
+    const clipSy2 = Math.max(sy, 0);
+    const clipEx2 = Math.min(sx + size, img.width);
+    const clipEy2 = Math.min(sy + size, img.height);
+    const clipW2 = clipEx2 - clipSx2, clipH2 = clipEy2 - clipSy2;
+    if (clipW2 > 0 && clipH2 > 0) {
+      ctx.filter = 'blur(18px)';
+      // 이미지 가장자리를 늘려서 빈 공간 채우기
+      ctx.drawImage(img, clipSx2, clipSy2, clipW2, clipH2, 0, 0, OUTPUT_SIZE, OUTPUT_SIZE);
+      ctx.filter = 'none';
+    }
+  }
+
+  // 실제 이미지 정확한 위치에 그리기
   const clipSx = Math.max(sx, 0);
   const clipSy = Math.max(sy, 0);
   const clipEx = Math.min(sx + size, img.width);
