@@ -133,6 +133,13 @@
   }
   .reset-link.visible { display: block; }
 
+  .batch-status {
+    font-size: 13px;
+    color: #888;
+    text-align: center;
+    min-height: 18px;
+  }
+
   /* 상단 공지 배너 */
   .notice-banner {
     background: #fff3cd;
@@ -239,7 +246,7 @@
   <div class="dropzone" id="dropzone">
     <div class="dropzone-icon">🖼</div>
     <div class="dropzone-label">이미지를 드래그하거나 클릭해서 업로드</div>
-    <input type="file" id="fileInput" accept="image/jpeg,image/png,image/webp,image/heic,image/bmp,image/tiff">
+    <input type="file" id="fileInput" accept="image/jpeg,image/png,image/webp,image/heic,image/bmp,image/tiff" multiple>
   </div>
 
   <div class="previews" id="previews">
@@ -262,21 +269,21 @@
   </div>
 
   <div class="progress-wrap" id="progressWrap">
-    <div class="progress-label" id="progressLabel">AI 업스케일 중... 0%</div>
+    <div class="progress-label" id="progressLabel">업스케일 중... 0%</div>
     <div class="progress-bar-bg"><div class="progress-bar" id="progressBar"></div></div>
   </div>
 
   <div class="spinner" id="spinner"></div>
   <div class="status" id="status">모델 로딩 중...</div>
+  <div class="batch-status" id="batchStatus"></div>
 
-  <button class="btn" id="downloadBtn" disabled onclick="downloadResult()">저장</button>
   <span class="reset-link" id="resetLink" onclick="resetAll()">다시 업로드</span>
 
 </div>
 
 <script>
 // ── 빌드 타임스탬프 표시 ──────────────────────────
-const BUILD_TIME = '2026-04-01T07:49:34Z';
+const BUILD_TIME = '2026-04-01T07:56:11Z';
 (function() {
   const d = new Date(BUILD_TIME);
   const pad = n => String(n).padStart(2,'0');
@@ -349,7 +356,6 @@ const origImg      = document.getElementById('origImg');
 const resultCanvas = document.getElementById('resultCanvas');
 const spinner      = document.getElementById('spinner');
 const statusEl     = document.getElementById('status');
-const downloadBtn  = document.getElementById('downloadBtn');
 const resetLink    = document.getElementById('resetLink');
 const errorBox     = document.getElementById('errorBox');
 const errorTitle   = document.getElementById('errorTitle');
@@ -371,19 +377,41 @@ waitForFaceAPI(async () => {
 });
 
 dropzone.addEventListener('click', () => fileInput.click());
-fileInput.addEventListener('change', e => { if (e.target.files[0]) handleFile(e.target.files[0]); });
+fileInput.addEventListener('change', e => {
+  const files = Array.from(e.target.files);
+  if (files.length) handleFiles(files);
+});
 dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('over'); });
 dropzone.addEventListener('dragleave', () => dropzone.classList.remove('over'));
 dropzone.addEventListener('drop', e => {
   e.preventDefault(); dropzone.classList.remove('over');
-  const f = e.dataTransfer.files[0];
-  if (f) handleFile(f);
+  const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+  if (files.length) handleFiles(files);
 });
+
+// 다중 파일 순차 처리
+async function handleFiles(files) {
+  const total = files.length;
+  const batchStatus = document.getElementById('batchStatus');
+  for (let i = 0; i < total; i++) {
+    batchStatus.textContent = total > 1 ? `${i + 1} / ${total} 처리 중` : '';
+    await handleFile(files[i]);
+    // 업스케일 모달 대기 중이면 사용자 선택 완료까지 대기
+    await new Promise(r => {
+      const check = () => {
+        if (!upscaleModal.classList.contains('visible')) r();
+        else setTimeout(check, 100);
+      };
+      check();
+    });
+  }
+  batchStatus.textContent = total > 1 ? `✓ ${total}장 완료` : '';
+  setTimeout(() => { batchStatus.textContent = ''; }, 3000);
+}
 
 async function handleFile(file) {
   hideError();
   resetLink.classList.remove('visible');
-  downloadBtn.disabled = true;
   originalFileName = file.name;
 
   if (!modelsReady) { showError('모델 준비 중', '잠시 후 다시 시도해 주세요.'); return; }
@@ -501,8 +529,8 @@ async function processImage(img, doUpscale = false) {
     cropAndDraw(procImg, lastBox);
     spinner.classList.remove('visible');
     setStatus('인식 완료 ✓');
-    downloadBtn.disabled = false;
     resetLink.classList.add('visible');
+    downloadResult(); // 자동 다운로드
   } catch {
     spinner.classList.remove('visible');
     showError('처리 오류', '이미지 처리 중 문제가 발생했습니다.');
@@ -618,10 +646,10 @@ function resetAll() {
   resultCanvas.getContext('2d').clearRect(0, 0, OUTPUT_SIZE, OUTPUT_SIZE);
   previews.classList.remove('visible');
   resetLink.classList.remove('visible');
-  downloadBtn.disabled = true;
   fileInput.value = '';
   hideError();
   setStatus('이미지를 업로드하세요');
+  document.getElementById('batchStatus').textContent = '';
 }
 
 function showError(title, msg) {
