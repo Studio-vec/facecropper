@@ -511,46 +511,60 @@ function cropAndDraw(img, { cx, cy, faceSize }) {
   const needsPad = sx < 0 || sy < 0 || sx + size > img.width || sy + size > img.height;
 
   if (needsPad) {
-    // 이미지 가장자리 픽셀을 바깥으로 클램핑해서 자연스럽게 채우기
-    // 임시 캔버스에 원본 이미지 그리기
     const tmpC = document.createElement('canvas');
     tmpC.width = img.width; tmpC.height = img.height;
     const tmpCtx = tmpC.getContext('2d');
     tmpCtx.drawImage(img, 0, 0);
 
-    // 빈 영역 4방향 채우기 (가장자리 1px 슬라이스를 늘림)
-    // 위쪽 빈 영역
+    // 캔버스 좌표 헬퍼
+    const toD = (imgCoord) => (imgCoord - sx) / size * OUTPUT_SIZE;
+    const padL = sx < 0 ? toD(0) : 0;                          // 왼쪽 이미지 시작 x
+    const padT = sy < 0 ? toD(sy < 0 ? 0 : sy) : 0;           // 위쪽 이미지 시작 y
+    const dstL = Math.max(0, toD(0));
+    const dstT = Math.max(0, toD(0 /* sy relative */));
+    const imgL  = (Math.max(sx, 0) - sx) / size * OUTPUT_SIZE; // 이미지가 시작되는 캔버스 x
+    const imgT  = (Math.max(sy, 0) - sy) / size * OUTPUT_SIZE; // 이미지가 시작되는 캔버스 y
+    const imgR  = (Math.min(sx + size, img.width)  - sx) / size * OUTPUT_SIZE;
+    const imgB  = (Math.min(sy + size, img.height) - sy) / size * OUTPUT_SIZE;
+    const imgW  = imgR - imgL;
+    const imgH  = imgB - imgT;
+
+    // ── 위쪽 ──
     if (sy < 0) {
-      const stripH = Math.min(1, img.height);
-      ctx.drawImage(tmpC, 0, 0, img.width, stripH,
-        (0 - sx) / size * OUTPUT_SIZE, 0,
-        img.width / size * OUTPUT_SIZE,
-        (-sy) / size * OUTPUT_SIZE);
+      ctx.drawImage(tmpC, 0, 0, img.width, 1,
+        imgL, 0, imgW, imgT);
     }
-    // 아래쪽 빈 영역
+    // ── 아래쪽 ──
     if (sy + size > img.height) {
-      const stripY = img.height - 1;
-      const dstY = (img.height - sy) / size * OUTPUT_SIZE;
-      ctx.drawImage(tmpC, 0, stripY, img.width, 1,
-        (0 - sx) / size * OUTPUT_SIZE, dstY,
-        img.width / size * OUTPUT_SIZE,
-        OUTPUT_SIZE - dstY);
+      ctx.drawImage(tmpC, 0, img.height - 1, img.width, 1,
+        imgL, imgB, imgW, OUTPUT_SIZE - imgB);
     }
-    // 왼쪽 빈 영역
+    // ── 왼쪽 ──
     if (sx < 0) {
       ctx.drawImage(tmpC, 0, 0, 1, img.height,
-        0, (0 - sy) / size * OUTPUT_SIZE,
-        (-sx) / size * OUTPUT_SIZE,
-        img.height / size * OUTPUT_SIZE);
+        0, imgT, imgL, imgH);
     }
-    // 오른쪽 빈 영역
+    // ── 오른쪽 ──
     if (sx + size > img.width) {
-      const stripX = img.width - 1;
-      const dstX = (img.width - sx) / size * OUTPUT_SIZE;
-      ctx.drawImage(tmpC, stripX, 0, 1, img.height,
-        dstX, (0 - sy) / size * OUTPUT_SIZE,
-        OUTPUT_SIZE - dstX,
-        img.height / size * OUTPUT_SIZE);
+      ctx.drawImage(tmpC, img.width - 1, 0, 1, img.height,
+        imgR, imgT, OUTPUT_SIZE - imgR, imgH);
+    }
+    // ── 모서리 4개: 코너 픽셀 1개를 늘림 ──
+    // 좌상단
+    if (sx < 0 && sy < 0) {
+      ctx.drawImage(tmpC, 0, 0, 1, 1, 0, 0, imgL, imgT);
+    }
+    // 우상단
+    if (sx + size > img.width && sy < 0) {
+      ctx.drawImage(tmpC, img.width - 1, 0, 1, 1, imgR, 0, OUTPUT_SIZE - imgR, imgT);
+    }
+    // 좌하단
+    if (sx < 0 && sy + size > img.height) {
+      ctx.drawImage(tmpC, 0, img.height - 1, 1, 1, 0, imgB, imgL, OUTPUT_SIZE - imgB);
+    }
+    // 우하단
+    if (sx + size > img.width && sy + size > img.height) {
+      ctx.drawImage(tmpC, img.width - 1, img.height - 1, 1, 1, imgR, imgB, OUTPUT_SIZE - imgR, OUTPUT_SIZE - imgB);
     }
   }
 
