@@ -6,7 +6,10 @@
 <title>FaceCropper</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&display=swap" rel="stylesheet">
 <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
-<!-- BUILD:2026-04-01T06:51:36Z -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.11.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/upscaler@1.0.0-beta.18/dist/browser/umd/upscaler.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@upscalerjs/esrgan-slim@1.0.0-beta.12/dist/browser/umd/index.min.js"></script>
+<!-- BUILD:2026-04-01T07:13:48Z -->
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -177,7 +180,7 @@
 
 <script>
 // ── 빌드 타임스탬프 표시 ──────────────────────────
-const BUILD_TIME = '2026-04-01T06:51:36Z';
+const BUILD_TIME = '2026-04-01T07:13:48Z';
 (function() {
   const d = new Date(BUILD_TIME);
   const pad = n => String(n).padStart(2,'0');
@@ -187,12 +190,22 @@ const BUILD_TIME = '2026-04-01T06:51:36Z';
 })();
 
 // ── 배포 설정 ──────────────────────────────────────
-const FACE_FILL_RATIO = 0.70; // 결과 이미지에서 얼굴이 차지할 비율 (0~1)
+const FACE_FILL_RATIO = 0.45; // 결과 이미지에서 얼굴이 차지할 비율 (0~1)
 const CENTER_Y_RATIO = 0.35;
 const OUTPUT_SIZE    = 300;
 const MAX_FILE_MB    = 10;
-const PAD_COLOR      = '#ffffff'; // 여백 부족 시 채울 배경색
+const UPSCALE_THRESHOLD = 500; // 이 픽셀 이하면 AI 업스케일 적용
+const PAD_COLOR      = '#ffffff';
 // ──────────────────────────────────────────────────
+
+let upscaler = null;
+
+// 업스케일러 지연 초기화 (첫 사용 시)
+async function getUpscaler() {
+  if (upscaler) return upscaler;
+  upscaler = new Upscaler({ model: ESRGANSlim });
+  return upscaler;
+}
 
 const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.13/model';
 
@@ -267,8 +280,24 @@ async function handleFile(file) {
   const img = new Image();
   img.onload = async () => {
     try {
+      let procImg = img;
+
+      // 500px 이하면 AI 업스케일 적용
+      if (Math.max(img.width, img.height) <= UPSCALE_THRESHOLD) {
+        setStatus('AI 업스케일 중...');
+        try {
+          const up = await getUpscaler();
+          const upscaled = await up.upscale(img);
+          procImg = upscaled;
+        } catch(e) {
+          // 업스케일 실패해도 원본으로 계속 진행
+          console.warn('업스케일 실패, 원본 사용:', e);
+        }
+      }
+
+      setStatus('');
       const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 512, scoreThreshold: 0.4 });
-      const dets = await faceapi.detectAllFaces(img, opts).withFaceLandmarks(true);
+      const dets = await faceapi.detectAllFaces(procImg, opts).withFaceLandmarks(true);
 
       if (!dets || dets.length === 0) {
         spinner.classList.remove('visible');
@@ -295,9 +324,8 @@ async function handleFile(file) {
       const faceCx   = (leftX + rightX) / 2;
       const faceCy   = topY + faceH * CENTER_Y_RATIO;
 
-      lastImg = img;
-      lastBox = { cx: faceCx, cy: faceCy, faceSize };
-      cropAndDraw(img, lastBox);
+      lastImg = procImg; lastBox = { cx: faceCx, cy: faceCy, faceSize };
+      cropAndDraw(procImg, lastBox);
       spinner.classList.remove('visible');
       setStatus('인식 완료 ✓');
       downloadBtn.disabled = false;
