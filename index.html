@@ -86,7 +86,6 @@
     width: 100%; height: 100%; object-fit: contain;
   }
 
-  /* 오류 박스 */
   .error-box {
     display: none;
     background: #fff8f8;
@@ -157,7 +156,6 @@
     </div>
   </div>
 
-  <!-- 오류 박스 -->
   <div class="error-box" id="errorBox">
     <div class="error-title" id="errorTitle">⚠ 오류</div>
     <div id="errorMsg"></div>
@@ -179,8 +177,9 @@
 const SCALE          = 1.55;
 const CENTER_Y_RATIO = 0.35;
 const OUTPUT_SIZE    = 300;
-const MAX_FILE_MB    = 10;       // 허용 최대 파일 크기
-// ──────────────────────────────────3──────────────
+const MAX_FILE_MB    = 10;
+const PAD_COLOR      = '#ffffff'; // 여백 부족 시 채울 배경색
+// ──────────────────────────────────────────────────
 
 const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.13/model';
 
@@ -230,23 +229,12 @@ async function handleFile(file) {
   resetLink.classList.remove('visible');
   downloadBtn.disabled = true;
 
-  // 모델 로딩 체크
-  if (!modelsReady) {
-    showError('모델 준비 중', '잠시 후 다시 시도해 주세요.');
-    return;
-  }
-
-  // 파일 크기 체크
+  if (!modelsReady) { showError('모델 준비 중', '잠시 후 다시 시도해 주세요.'); return; }
   if (file.size > MAX_FILE_MB * 1024 * 1024) {
-    showError(
-      '파일 크기 초과',
-      `파일 크기가 ${MAX_FILE_MB}MB를 초과합니다. (현재 ${(file.size/1024/1024).toFixed(1)}MB)`
-    );
+    showError('파일 크기 초과', `파일 크기가 ${MAX_FILE_MB}MB를 초과합니다. (현재 ${(file.size/1024/1024).toFixed(1)}MB)`);
     resetLink.classList.add('visible');
     return;
   }
-
-  // 파일 형식 체크
   if (!['image/jpeg','image/png'].includes(file.type)) {
     showError('지원하지 않는 형식', 'JPG 또는 PNG 파일만 업로드할 수 있습니다.');
     resetLink.classList.add('visible');
@@ -267,7 +255,7 @@ async function handleFile(file) {
 
       if (!dets || dets.length === 0) {
         spinner.classList.remove('visible');
-        showError('얼굴 인식 실패', '사진에서 얼굴을 찾지 못했습니다.\n정면을 바라보는 선명한 사진을 사용해 주세요.');
+        showError('얼굴 인식 실패', '사진에서 얼굴을 찾지 못했습니다. 정면을 바라보는 선명한 사진을 사용해 주세요.');
         resetLink.classList.add('visible');
         return;
       }
@@ -275,15 +263,13 @@ async function handleFile(file) {
       const det = dets.reduce((a, b) =>
         a.box.width * a.box.height >= b.box.width * b.box.height ? a : b
       );
-      lastImg = img;
-      lastBox = det.box;
-
+      lastImg = img; lastBox = det.box;
       cropAndDraw(img, det.box);
       spinner.classList.remove('visible');
       setStatus('인식 완료 ✓');
       downloadBtn.disabled = false;
       resetLink.classList.add('visible');
-    } catch(err) {
+    } catch {
       spinner.classList.remove('visible');
       showError('처리 오류', '이미지 처리 중 문제가 발생했습니다.');
       resetLink.classList.add('visible');
@@ -303,9 +289,41 @@ function cropAndDraw(img, box) {
   const cy = y + h * CENTER_Y_RATIO;
   const size = Math.max(w, h) * SCALE;
   const half = size / 2;
+
+  // 크롭 영역 (원본 이미지 좌표 기준)
+  const sx = cx - half;
+  const sy = cy - half;
+
   const ctx = resultCanvas.getContext('2d');
   ctx.clearRect(0, 0, OUTPUT_SIZE, OUTPUT_SIZE);
-  ctx.drawImage(img, cx - half, cy - half, size, size, 0, 0, OUTPUT_SIZE, OUTPUT_SIZE);
+
+  // 배경 먼저 채움 → 이미지 밖으로 나간 부분은 이 색으로 자동 패딩
+  ctx.fillStyle = PAD_COLOR;
+  ctx.fillRect(0, 0, OUTPUT_SIZE, OUTPUT_SIZE);
+
+  // 이미지 범위와 크롭 영역의 교차 계산
+  const clipSx = Math.max(sx, 0);
+  const clipSy = Math.max(sy, 0);
+  const clipEx = Math.min(sx + size, img.width);
+  const clipEy = Math.min(sy + size, img.height);
+
+  const clipW = clipEx - clipSx;
+  const clipH = clipEy - clipSy;
+
+  if (clipW <= 0 || clipH <= 0) return;
+
+  // 출력 캔버스에서의 대응 위치
+  const dxRatio = (clipSx - sx) / size;
+  const dyRatio = (clipSy - sy) / size;
+  const dwRatio = clipW / size;
+  const dhRatio = clipH / size;
+
+  ctx.drawImage(
+    img,
+    clipSx, clipSy, clipW, clipH,                              // 원본에서 실제로 있는 부분만
+    dxRatio * OUTPUT_SIZE, dyRatio * OUTPUT_SIZE,               // 결과 캔버스 내 위치
+    dwRatio * OUTPUT_SIZE, dhRatio * OUTPUT_SIZE
+  );
 }
 
 function downloadResult() {
@@ -334,7 +352,10 @@ function showError(title, msg) {
   setStatus('');
 }
 function hideError() { errorBox.classList.remove('visible'); }
-function setStatus(msg) { statusEl.textContent = msg; statusEl.className = msg === '인식 완료 ✓' ? 'status ok' : 'status'; }
+function setStatus(msg) {
+  statusEl.textContent = msg;
+  statusEl.className = msg === '인식 완료 ✓' ? 'status ok' : 'status';
+}
 </script>
 </body>
 </html>
