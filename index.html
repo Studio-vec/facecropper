@@ -174,7 +174,7 @@
 
 <script>
 // ── 배포 설정 ──────────────────────────────────────
-const SCALE          = 1.55;
+const FACE_FILL_RATIO = 0.70; // 결과 이미지에서 얼굴이 차지할 비율 (0~1)
 const CENTER_Y_RATIO = 0.35;
 const OUTPUT_SIZE    = 300;
 const MAX_FILE_MB    = 10;
@@ -287,7 +287,8 @@ function cropAndDraw(img, box) {
   const { x, y, width: w, height: h } = box;
   const cx = x + w * 0.5;
   const cy = y + h * CENTER_Y_RATIO;
-  const size = Math.max(w, h) * SCALE;
+  // 얼굴 박스가 결과 이미지의 FACE_FILL_RATIO 비율을 차지하도록 역산
+  const size = Math.max(w, h) / FACE_FILL_RATIO;
   const half = size / 2;
 
   // 크롭 영역 (원본 이미지 좌표 기준)
