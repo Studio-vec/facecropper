@@ -136,7 +136,7 @@
 </head>
 <body>
 
-<h1>FaceCropper</h1>
+<h1>2026 세지포 파이팅!</h1>
 <p class="sub">얼굴 자동 인식 → 300×300 JPG 저장</p>
 <p class="build-info" id="buildInfo"></p>
 
@@ -145,7 +145,7 @@
   <div class="dropzone" id="dropzone">
     <div class="dropzone-icon">🖼</div>
     <div class="dropzone-label">이미지를 드래그하거나 클릭해서 업로드</div>
-    <input type="file" id="fileInput" accept="image/jpeg,image/png">
+    <input type="file" id="fileInput" accept="image/jpeg,image/png,image/webp,image/heic,image/bmp,image/tiff">
   </div>
 
   <div class="previews" id="previews">
@@ -187,7 +187,7 @@ const BUILD_TIME = '2026-04-01T06:51:36Z';
 })();
 
 // ── 배포 설정 ──────────────────────────────────────
-const FACE_FILL_RATIO = 0.70; // 결과 이미지에서 얼굴이 차지할 비율 (0~1)
+const FACE_FILL_RATIO = 0.50; // 결과 이미지에서 얼굴이 차지할 비율 (0~1)
 const CENTER_Y_RATIO = 0.35;
 const OUTPUT_SIZE    = 300;
 const MAX_FILE_MB    = 10;
@@ -199,6 +199,7 @@ const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.13/mode
 let modelsReady = false;
 let lastImg = null;
 let lastBox = null;
+let originalFileName = '';
 
 const dropzone     = document.getElementById('dropzone');
 const fileInput    = document.getElementById('fileInput');
@@ -242,6 +243,7 @@ async function handleFile(file) {
   hideError();
   resetLink.classList.remove('visible');
   downloadBtn.disabled = true;
+  originalFileName = file.name;
 
   if (!modelsReady) { showError('모델 준비 중', '잠시 후 다시 시도해 주세요.'); return; }
   if (file.size > MAX_FILE_MB * 1024 * 1024) {
@@ -249,8 +251,9 @@ async function handleFile(file) {
     resetLink.classList.add('visible');
     return;
   }
-  if (!['image/jpeg','image/png'].includes(file.type)) {
-    showError('지원하지 않는 형식', 'JPG 또는 PNG 파일만 업로드할 수 있습니다.');
+  const ALLOWED = ['image/jpeg','image/png','image/webp','image/heic','image/bmp','image/tiff'];
+  if (!ALLOWED.includes(file.type) && !file.type.startsWith('image/')) {
+    showError('지원하지 않는 형식', '이미지 파일만 업로드할 수 있습니다.');
     resetLink.classList.add('visible');
     return;
   }
@@ -348,8 +351,9 @@ function cropAndDraw(img, { cx, cy, faceSize }) {
 }
 
 function downloadResult() {
+  const original = (originalFileName || 'photo.jpg').replace(/\.[^.]+$/, '');
   const a = document.createElement('a');
-  a.download = 'photo_300x300.jpg';
+  a.download = `(hp)${original}.jpg`;
   a.href = resultCanvas.toDataURL('image/jpeg', 0.95);
   a.click();
 }
