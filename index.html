@@ -276,7 +276,7 @@
 
 <script>
 // ── 빌드 타임스탬프 표시 ──────────────────────────
-const BUILD_TIME = '2026-04-01T07:28:26Z';
+const BUILD_TIME = '2026-04-01T07:49:34Z';
 (function() {
   const d = new Date(BUILD_TIME);
   const pad = n => String(n).padStart(2,'0');
@@ -329,8 +329,9 @@ let modelsReady = false;
 let lastImg = null;
 let lastBox = null;
 let originalFileName = '';
-let pendingImg = null;   // 모달 대기 중인 이미지
-let pendingFile = null;  // 모달 대기 중인 파일
+let pendingImg = null;
+let pendingFile = null;
+let currentObjectURL = null;
 
 const progressWrap  = document.getElementById('progressWrap');
 const progressBar   = document.getElementById('progressBar');
@@ -394,11 +395,13 @@ async function handleFile(file) {
     return;
   }
 
+  if (currentObjectURL) URL.revokeObjectURL(currentObjectURL);
   const url = URL.createObjectURL(file);
+  currentObjectURL = url;
+  fileInput.value = '';
   origImg.src = url;
   previews.classList.add('visible');
-  setStatus('');
-  spinner.classList.add('visible');
+  setStatus('');  spinner.classList.add('visible');
 
   const img = new Image();
   img.onload = async () => {
@@ -539,16 +542,12 @@ function cropAndDraw(img, { cx, cy, faceSize }) {
 
     // 캔버스 좌표 헬퍼
     const toD = (imgCoord) => (imgCoord - sx) / size * OUTPUT_SIZE;
-    const padL = sx < 0 ? toD(0) : 0;                          // 왼쪽 이미지 시작 x
-    const padT = sy < 0 ? toD(sy < 0 ? 0 : sy) : 0;           // 위쪽 이미지 시작 y
-    const dstL = Math.max(0, toD(0));
-    const dstT = Math.max(0, toD(0 /* sy relative */));
-    const imgL  = (Math.max(sx, 0) - sx) / size * OUTPUT_SIZE; // 이미지가 시작되는 캔버스 x
-    const imgT  = (Math.max(sy, 0) - sy) / size * OUTPUT_SIZE; // 이미지가 시작되는 캔버스 y
-    const imgR  = (Math.min(sx + size, img.width)  - sx) / size * OUTPUT_SIZE;
-    const imgB  = (Math.min(sy + size, img.height) - sy) / size * OUTPUT_SIZE;
-    const imgW  = imgR - imgL;
-    const imgH  = imgB - imgT;
+    const imgL = (Math.max(sx, 0) - sx) / size * OUTPUT_SIZE;
+    const imgT = (Math.max(sy, 0) - sy) / size * OUTPUT_SIZE;
+    const imgR = (Math.min(sx + size, img.width)  - sx) / size * OUTPUT_SIZE;
+    const imgB = (Math.min(sy + size, img.height) - sy) / size * OUTPUT_SIZE;
+    const imgW = imgR - imgL;
+    const imgH = imgB - imgT;
 
     // ── 위쪽 ──
     if (sy < 0) {
@@ -620,7 +619,8 @@ function downloadResult() {
 }
 
 function resetAll() {
-  lastImg = null; lastBox = null;
+  lastImg = null; lastBox = null; pendingImg = null;
+  if (currentObjectURL) { URL.revokeObjectURL(currentObjectURL); currentObjectURL = null; }
   origImg.src = '';
   resultCanvas.getContext('2d').clearRect(0, 0, OUTPUT_SIZE, OUTPUT_SIZE);
   previews.classList.remove('visible');
