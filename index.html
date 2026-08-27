@@ -150,17 +150,8 @@
   .status { font-size: 13px; color: #888; text-align: center; min-height: 20px; }
   .status.ok { color: #080; }
 
-  .spinner {
-    display: none;
-    width: 20px; height: 20px;
-    border: 2px solid #ddd;
-    border-top-color: #111;
-    border-radius: 50%;
-    animation: spin 0.7s linear infinite;
-    margin: 0 auto;
-  }
-  .spinner.visible { display: block; }
-  @keyframes spin { to { transform: rotate(360deg); } }
+  /* 처리 중 상태를 내부적으로만 표시(미니게임 표시 여부 판단용) — 화면에는 그리지 않음 */
+  .spinner { display: none; }
 
   .reset-link {
     display: none;
@@ -218,6 +209,27 @@
     width: 0%;
     transition: width 0.3s;
   }
+
+  /* 대기 중 미니게임 */
+  .game-wrap {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+  .game-wrap.visible { display: flex; }
+  .game-hint { font-size: 11px; color: #aaa; text-align: center; }
+  #gameCanvas {
+    width: 100%;
+    max-width: 400px;
+    height: auto;
+    background: #fff;
+    border: 2px solid #111;
+    border-radius: 6px;
+    image-rendering: pixelated;
+    touch-action: manipulation;
+    cursor: pointer;
+  }
 </style>
 </head>
 <body>
@@ -269,6 +281,11 @@
   <div class="spinner" id="spinner"></div>
   <div class="status" id="status">모델 로딩 중...</div>
   <div class="batch-status" id="batchStatus"></div>
+
+  <div class="game-wrap" id="gameWrap">
+    <canvas id="gameCanvas" width="400" height="170"></canvas>
+    <div class="game-hint">기다리는 동안 스페이스바 / 탭으로 점프!</div>
+  </div>
 
   <button class="btn" id="downloadBtn" disabled onclick="downloadResult()">저장</button>
   <span class="reset-link" id="resetLink" onclick="resetAll()">다시 업로드</span>
@@ -676,6 +693,8 @@ function resetAll() {
   document.getElementById('downloadBtn').disabled = true;
   fileInput.value = '';
   hideError();
+  spinner.classList.remove('visible');
+  progressWrap.classList.remove('visible');
   setStatus('이미지를 업로드하세요');
   document.getElementById('batchStatus').textContent = '';
 }
@@ -691,6 +710,168 @@ function setStatus(msg) {
   statusEl.textContent = msg;
   statusEl.className = msg === '인식 완료 ✓' ? 'status ok' : 'status';
 }
+
+// ── 대기 중 미니게임: 마스코트 픽셀 점프 게임 ────────────
+(function() {
+  const gameWrap = document.getElementById('gameWrap');
+  const canvas   = document.getElementById('gameCanvas');
+  const ctx      = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+
+  const sprite = new Image();
+  sprite.src = 'owl-sprite.png';
+  const obstacleSprite = new Image();
+  obstacleSprite.src = 'obstacles.png';
+
+  const SHEET_FRAME_W = 491, SHEET_FRAME_H = 619; // owl-sprite.png: idle, jump
+  const IDLE_FRAME = 0;
+  const JUMP_FRAME = 1;
+
+  const OBST_FRAME_W = 550, OBST_FRAME_H = 430; // obstacles.png: book, newspaper
+  const OBST_TYPES = [
+    { frame: 0, minH: 20, maxH: 28 }, // 책 (낮고 넓음)
+    { frame: 1, minH: 26, maxH: 38 }, // 신문 (조금 더 높음, 여유 있게 점프 가능한 높이)
+  ];
+
+  const W = canvas.width, H = canvas.height;
+  const GROUND_Y = 140;
+  const CHAR_X = 30, CHAR_W = 43, CHAR_H = 54;
+  const GRAVITY = 0.7, JUMP_POWER = 10;
+
+  let state = 'idle'; // idle | playing | over
+  let jumpOffset = 0, jumpVel = 0;
+  let obstacles = [];
+  let spawnTimer = 60;
+  let speed = 3.2;
+  let score = 0;
+  let best = Number(localStorage.getItem('owlJumpBest') || 0);
+  let walkPhase = 0;
+  let rafId = null;
+
+  function reset() {
+    state = 'idle';
+    jumpOffset = 0; jumpVel = 0;
+    obstacles = []; spawnTimer = 60; speed = 3.2; score = 0; walkPhase = 0;
+  }
+  reset();
+
+  function jump() {
+    if (state === 'idle') { state = 'playing'; return; }
+    if (state === 'over') { reset(); state = 'playing'; return; }
+    if (state === 'playing' && jumpOffset === 0) jumpVel = JUMP_POWER;
+  }
+
+  canvas.addEventListener('pointerdown', e => { e.preventDefault(); jump(); });
+  window.addEventListener('keydown', e => {
+    if (!gameWrap.classList.contains('visible')) return;
+    if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); jump(); }
+  });
+
+  function spawnObstacle() {
+    const type = OBST_TYPES[Math.floor(Math.random() * OBST_TYPES.length)];
+    const h = type.minH + Math.random() * (type.maxH - type.minH);
+    const w = h * (OBST_FRAME_W / OBST_FRAME_H);
+    obstacles.push({ x: W + 10, w, h, frame: type.frame });
+  }
+
+  function step() {
+    if (state === 'playing') {
+      jumpOffset += jumpVel;
+      jumpVel -= GRAVITY;
+      if (jumpOffset < 0) { jumpOffset = 0; jumpVel = 0; }
+      if (jumpOffset === 0) walkPhase += 0.28;
+
+      spawnTimer--;
+      if (spawnTimer <= 0) {
+        spawnObstacle();
+        spawnTimer = Math.max(45, 90 - speed * 6) + Math.random() * 30;
+      }
+      obstacles.forEach(o => o.x -= speed);
+      obstacles = obstacles.filter(o => o.x + o.w > -10);
+      speed = Math.min(speed + 0.002, 7.5);
+      score += speed * 0.08;
+
+      const cb = { x: CHAR_X + 8, y: GROUND_Y - jumpOffset - CHAR_H + 10, w: CHAR_W - 16, h: CHAR_H - 14 };
+      for (const o of obstacles) {
+        const ob = { x: o.x + o.w * 0.2, y: GROUND_Y - o.h * 0.75, w: o.w * 0.6, h: o.h * 0.75 };
+        if (cb.x < ob.x + ob.w && cb.x + cb.w > ob.x && cb.y < ob.y + ob.h && cb.y + cb.h > ob.y) {
+          state = 'over';
+          best = Math.max(best, Math.floor(score));
+          localStorage.setItem('owlJumpBest', String(best));
+        }
+      }
+    }
+
+    draw();
+    rafId = requestAnimationFrame(step);
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, GROUND_Y + 1);
+    ctx.lineTo(W, GROUND_Y + 1);
+    ctx.stroke();
+
+    if (obstacleSprite.complete && obstacleSprite.naturalWidth) {
+      obstacles.forEach(o => ctx.drawImage(
+        obstacleSprite,
+        o.frame * OBST_FRAME_W, 0, OBST_FRAME_W, OBST_FRAME_H,
+        o.x, GROUND_Y - o.h, o.w, o.h
+      ));
+    }
+
+    const frame = jumpOffset > 4 ? JUMP_FRAME : IDLE_FRAME;
+    if (sprite.complete && sprite.naturalWidth) {
+      // 걷는 모션(그라운드에서 좌우 스쿼시-스트레치 흔들림) + 진행 방향(오른쪽)으로 좌우 반전
+      const wobble = (state === 'playing' && jumpOffset === 0) ? Math.sin(walkPhase) * 0.05 : 0;
+      const pivotX = CHAR_X + CHAR_W / 2, pivotY = GROUND_Y;
+      ctx.save();
+      ctx.translate(pivotX, pivotY);
+      ctx.scale(-(1 + wobble), 1 - wobble);
+      ctx.translate(-pivotX, -pivotY);
+      ctx.drawImage(
+        sprite,
+        frame * SHEET_FRAME_W, 0, SHEET_FRAME_W, SHEET_FRAME_H,
+        CHAR_X, GROUND_Y - jumpOffset - CHAR_H, CHAR_W, CHAR_H
+      );
+      ctx.restore();
+    }
+
+    ctx.fillStyle = '#111';
+    ctx.font = '12px "Noto Sans KR", monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText(`SCORE ${Math.floor(score)}`, W - 8, 18);
+    ctx.fillText(`BEST ${best}`, W - 8, 32);
+
+    if (state === 'idle') {
+      ctx.textAlign = 'center';
+      ctx.fillText('탭 / 스페이스바로 시작', W / 2, H / 2);
+    } else if (state === 'over') {
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 14px "Noto Sans KR", monospace';
+      ctx.fillText('GAME OVER', W / 2, H / 2 - 8);
+      ctx.font = '12px "Noto Sans KR", monospace';
+      ctx.fillText('탭해서 다시 시작', W / 2, H / 2 + 10);
+    }
+  }
+
+  function startLoop() { if (!rafId) rafId = requestAnimationFrame(step); }
+  function stopLoop() { if (rafId) { cancelAnimationFrame(rafId); rafId = null; } }
+
+  function syncVisibility() {
+    const busy = spinner.classList.contains('visible') || progressWrap.classList.contains('visible');
+    if (busy) { gameWrap.classList.add('visible'); startLoop(); }
+    else { gameWrap.classList.remove('visible'); stopLoop(); }
+  }
+
+  new MutationObserver(syncVisibility).observe(spinner, { attributes: true, attributeFilter: ['class'] });
+  new MutationObserver(syncVisibility).observe(progressWrap, { attributes: true, attributeFilter: ['class'] });
+  syncVisibility();
+})();
 </script>
 </body>
 </html>
