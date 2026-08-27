@@ -6,7 +6,46 @@
 <title>FaceCropper</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&display=swap" rel="stylesheet">
 <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
-<!-- BUILD:2026-04-01T07:58:34Z -->
+<script type="module">
+  import { removeBackground, preload } from 'https://esm.sh/@imgly/background-removal@1.7.0';
+
+  // 가볍고 빠른 양자화 모델 + GPU 가속 시도 (미지원 브라우저는 자동으로 cpu로 폴백)
+  const BG_CONFIG = { model: 'isnet_quint8', device: 'gpu' };
+
+  window.__removeBackground = (blob, opts) => removeBackground(blob, { ...BG_CONFIG, ...opts });
+
+  const progressWrap  = document.getElementById('progressWrap');
+  const progressBar   = document.getElementById('progressBar');
+  const progressLabel = document.getElementById('progressLabel');
+  function setProgress(pct, label) {
+    progressBar.style.width = pct + '%';
+    progressLabel.textContent = label;
+  }
+
+  // 페이지 로드 시 모델을 미리 받아둬서 첫 사진 처리 지연을 없앤다
+  // (라이브러리가 보고하는 실제 진행률은 파일 단위로만 갱신돼 뚝뚝 끊기므로,
+  //  계속 조금씩 움직이는 가짜 진행률로 표시해 멈춘 것처럼 보이지 않게 한다)
+  (async () => {
+    progressWrap.classList.add('visible');
+    let fakeP = 0;
+    setProgress(0, '배경 제거 모델 준비 중... 0%');
+    const timer = setInterval(() => {
+      fakeP = Math.min(fakeP + Math.random() * 8, 92);
+      setProgress(Math.round(fakeP), `배경 제거 모델 준비 중... ${Math.round(fakeP)}%`);
+    }, 250);
+    try {
+      await preload(BG_CONFIG);
+    } catch (e) {
+      console.warn('배경 제거 모델 프리로드 실패 (첫 사진 처리 시 다시 시도됨):', e);
+    } finally {
+      clearInterval(timer);
+    }
+    setProgress(100, '배경 제거 모델 준비 완료!');
+    await new Promise(r => setTimeout(r, 300));
+    progressWrap.classList.remove('visible');
+  })();
+</script>
+<!-- BUILD:2026-08-27T00:00:00Z -->
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -192,7 +231,7 @@
 </div>
 
 <h1>2026 세지포 파이팅!</h1>
-<p class="sub">얼굴 자동 인식 → 300×300 JPG 저장</p>
+<p class="sub">얼굴 자동 인식 → 배경 제거(회색) → 300×300 JPG 저장</p>
 <p class="build-info" id="buildInfo"></p>
 
 <div class="card">
@@ -238,7 +277,7 @@
 
 <script>
 // ── 빌드 타임스탬프 표시 ──────────────────────────
-const BUILD_TIME = '2026-04-01T07:58:34Z';
+const BUILD_TIME = '2026-08-27T00:00:00Z';
 (function() {
   const d = new Date(BUILD_TIME);
   const pad = n => String(n).padStart(2,'0');
@@ -254,6 +293,7 @@ const OUTPUT_SIZE    = 300;
 const MAX_FILE_MB    = 50;
 const UPSCALE_THRESHOLD = 300; // 이 픽셀 이하면 AI 업스케일 적용
 const PAD_COLOR      = '#ffffff';
+const GRAY_BG        = '#b5b5b5'; // 배경 제거 후 채울 회색
 // ──────────────────────────────────────────────────
 
 // ── Canvas 업스케일 (Lanczos 보간, 라이브러리 불필요) ──
@@ -318,6 +358,7 @@ function waitForFaceAPI(cb) {
   if (typeof faceapi !== 'undefined') cb();
   else setTimeout(() => waitForFaceAPI(cb), 100);
 }
+
 waitForFaceAPI(async () => {
   try {
     await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
@@ -456,6 +497,17 @@ async function processImage(img, doUpscale = false) {
 
     lastImg = procImg; lastBox = { cx: faceCx, cy: faceCy, faceSize };
     cropAndDraw(procImg, lastBox);
+
+    setStatus('배경 제거 중...');
+    progressWrap.classList.add('visible');
+    setProgress(0, '배경 제거 중...');
+    try {
+      await applyGrayBackground(resultCanvas);
+    } catch (e) {
+      console.warn('배경 제거 실패, 원본 배경 유지:', e);
+    }
+    progressWrap.classList.remove('visible');
+
     spinner.classList.remove('visible');
     setStatus('인식 완료 ✓');
     document.getElementById('downloadBtn').disabled = false;
@@ -558,6 +610,52 @@ function cropAndDraw(img, { cx, cy, faceSize }) {
     dxRatio * OUTPUT_SIZE, dyRatio * OUTPUT_SIZE,
     dwRatio * OUTPUT_SIZE, dhRatio * OUTPUT_SIZE
   );
+}
+
+function blobToImage(blob) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = URL.createObjectURL(blob);
+  });
+}
+
+// 크롭된 결과에서 인물만 남기고 배경을 회색으로 채운다
+async function applyGrayBackground(canvas) {
+  await new Promise((resolve, reject) => {
+    let waited = 0;
+    const check = () => {
+      if (window.__removeBackground) return resolve();
+      waited += 100;
+      if (waited > 15000) return reject(new Error('배경 제거 모듈 로딩 지연'));
+      setTimeout(check, 100);
+    };
+    check();
+  });
+
+  const srcBlob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+
+  let fakeP = 0;
+  const timer = setInterval(() => {
+    fakeP = Math.min(fakeP + Math.random() * 12, 92);
+    setProgress(Math.round(fakeP), `배경 제거 중... ${Math.round(fakeP)}%`);
+  }, 200);
+
+  let fgBlob;
+  try {
+    fgBlob = await window.__removeBackground(srcBlob);
+  } finally {
+    clearInterval(timer);
+  }
+  setProgress(100, '배경 제거 완료!');
+  const fgImg = await blobToImage(fgBlob);
+
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = GRAY_BG;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(fgImg, 0, 0, canvas.width, canvas.height);
 }
 
 function downloadResult() {
